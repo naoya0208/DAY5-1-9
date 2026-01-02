@@ -128,9 +128,18 @@ function uploadExpenses(sheet, expenses) {
       sheet.getRange(2, 1, rows.length, 5).setValues(rows);
     }
     
+    // 変更を即座に反映
+    SpreadsheetApp.flush();
+    
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
     return {
       success: true,
       message: `${expenses.length}件のデータをアップロードしました`,
+      debug: {
+        spreadsheetName: ss.getName(),
+        sheetName: sheet.getName(),
+        lastRow: sheet.getLastRow()
+      },
       data: expenses
     };
     
