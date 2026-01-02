@@ -1,0 +1,5 @@
+# GitHub Pages configuration
+# This file tells GitHub Pages to use the expense-tracker folder
+
+# Disable Jekyll processing
+plugins: []
