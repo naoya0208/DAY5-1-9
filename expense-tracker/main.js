@@ -280,7 +280,7 @@ class CloudSync {
             method: 'POST',
             mode: 'cors',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'text/plain',
             },
             body: JSON.stringify({
                 action: 'upload',
@@ -305,7 +305,7 @@ class CloudSync {
             method: 'POST',
             mode: 'cors',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'text/plain',
             },
             body: JSON.stringify({
                 action: 'download'
@@ -329,7 +329,7 @@ class CloudSync {
             method: 'POST',
             mode: 'cors',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'text/plain',
             },
             body: JSON.stringify({
                 action: 'sync',
