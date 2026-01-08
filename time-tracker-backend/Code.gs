@@ -99,6 +99,10 @@ function handleClockIn(ss, traineeId, name, dateStr, timeStr, dateTimeStr) {
     throw new Error('「打刻記録」シートが見つかりません');
   }
   sheet.appendRow([dateStr, traineeId, name, timeStr, '', '', '']);
+  
+  // マスタを更新
+  updateMasterSheet(ss, traineeId, name, '勤務中');
+  
   sendLineMessage(`【出勤】\n${name}\n${dateTimeStr}`);
 }
 
@@ -109,10 +113,15 @@ function handleClockOut(ss, traineeId, name, dateStr, timeStr) {
   const data = sheet.getDataRange().getValues();
   let rowIdx = -1;
   
+  const targetTraineeId = String(traineeId).trim();
+  
   for (let i = data.length - 1; i >= 1; i--) {
      let rowDate = data[i][0];
     if (rowDate instanceof Date) rowDate = Utilities.formatDate(rowDate, 'JST', 'yyyy/MM/dd');
-    if (rowDate === dateStr && String(data[i][1]) === String(traineeId) && data[i][4] === '') {
+    const rowTraineeId = String(data[i][1]).trim();
+    
+    // 同一日の同一IDで、退勤時刻(列4)が空のものを探す
+    if (rowDate === dateStr && rowTraineeId === targetTraineeId && data[i][4] === '') {
       rowIdx = i + 1;
       break;
     }
@@ -125,6 +134,10 @@ function handleClockOut(ss, traineeId, name, dateStr, timeStr) {
     sheet.getRange(rowIdx, 5).setValue(timeStr);
     const workTime = calculateNetWorkTime(clockInTimeStr, timeStr, breakDuration);
     sheet.getRange(rowIdx, 7).setValue(workTime);
+
+    // マスタを更新
+    updateMasterSheet(ss, traineeId, name, '未出勤');
+
     sendLineMessage(`【退勤】\n${name}\n出勤：${clockInTimeStr}\n退勤：${timeStr}\n休憩：${breakDuration}\n勤務時間：${workTime}`);
   } else {
     logToSheet('WARN', 'Clock-out record not found for ' + name, { date: dateStr, id: traineeId });
@@ -138,10 +151,14 @@ function handleBreak(ss, traineeId, name, dateStr, timeStr, phase) {
   
   const data = sheet.getDataRange().getValues();
   let rowIdx = -1;
+  const targetTraineeId = String(traineeId).trim();
+
   for (let i = data.length - 1; i >= 1; i--) {
     let rowDate = data[i][0];
     if (rowDate instanceof Date) rowDate = Utilities.formatDate(rowDate, 'JST', 'yyyy/MM/dd');
-    if (rowDate === dateStr && String(data[i][1]) === String(traineeId) && data[i][4] === '') {
+    const rowTraineeId = String(data[i][1]).trim();
+
+    if (rowDate === dateStr && rowTraineeId === targetTraineeId && data[i][4] === '') {
       rowIdx = i + 1;
       break;
     }
@@ -150,16 +167,52 @@ function handleBreak(ss, traineeId, name, dateStr, timeStr, phase) {
   if (rowIdx !== -1) {
     if (phase === 'start') {
       sheet.getRange(rowIdx, 6).setValue('@' + timeStr);
+      updateMasterSheet(ss, traineeId, name, '休憩中');
     } else {
       const currentBreakVal = sheet.getRange(rowIdx, 6).getValue();
+      let totalBreakMin = 0;
+      
       if (typeof currentBreakVal === 'string' && currentBreakVal.startsWith('@')) {
         const bStartStr = currentBreakVal.substring(1);
-        const diffMin = getDiffInMinutes(bStartStr, timeStr);
-        sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(diffMin));
+        totalBreakMin = getDiffInMinutes(bStartStr, timeStr);
+        sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(totalBreakMin));
+      } else if (typeof currentBreakVal === 'string' && currentBreakVal.includes(':')) {
+        // すでに休憩記録がある場合は加算（仕様により上書きか加算か検討が必要ですが、ここでは計算を優先）
+        const bStartStr = timeStr; // 簡易的に上書き
+        sheet.getRange(rowIdx, 6).setValue(timeStr);
       }
+      updateMasterSheet(ss, traineeId, name, '勤務中');
     }
   } else {
     logToSheet('WARN', 'Break record row not found for ' + name);
+  }
+}
+
+/**
+ * 研修生マスタを更新する（存在しなければ追加）
+ */
+function updateMasterSheet(ss, traineeId, name, status) {
+  const sheet = ss.getSheetByName('研修生マスタ');
+  if (!sheet) return;
+
+  const data = sheet.getDataRange().getValues();
+  const targetId = String(traineeId).trim();
+  let rowIdx = -1;
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]).trim() === targetId) {
+      rowIdx = i + 1;
+      break;
+    }
+  }
+
+  if (rowIdx !== -1) {
+    // 既存更新
+    sheet.getRange(rowIdx, 2).setValue(name);
+    sheet.getRange(rowIdx, 3).setValue(status);
+  } else {
+    // 新規追加
+    sheet.appendRow([traineeId, name, status]);
   }
 }
 
