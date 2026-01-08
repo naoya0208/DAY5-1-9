@@ -3,6 +3,24 @@
 
 <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <script>
+        // 強制リロードスクリプト
+        (function () {
+            const RELOAD_KEY = 'force_reload_v2_2';
+            if (!sessionStorage.getItem(RELOAD_KEY)) {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function (registrations) {
+                        for (let registration of registrations) { registration.unregister(); }
+                    });
+                }
+                sessionStorage.setItem(RELOAD_KEY, 'true');
+                window.location.reload(true);
+            }
+        })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
@@ -10,7 +28,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/DAY5-1-9/manifest.json" />
     <title>出退勤管理アプリ</title>
-  <script type="module" crossorigin src="/DAY5-1-9/assets/index-DiquefiN.js"></script>
+  <script type="module" crossorigin src="/DAY5-1-9/assets/index-C9ATrUJi.js"></script>
   <link rel="stylesheet" crossorigin href="/DAY5-1-9/assets/index-iUW4VP-C.css">
 <link rel="manifest" href="/DAY5-1-9/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/DAY5-1-9/registerSW.js"></script></head>
 
