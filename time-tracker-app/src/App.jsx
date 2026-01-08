@@ -72,8 +72,8 @@ function App() {
                 showToast('課題完了を報告しました');
             }
         } catch (error) {
-            console.error('Error:', error);
-            alert('エラーが発生しました。インターネット接続を確認してください。');
+            console.error('Detailed Error:', error);
+            alert(`エラーが発生しました：${error.message}\nインターネット接続またはGASのアクセス許可設定（全員）を確認してください。`);
         } finally {
             setLoading(false);
         }
