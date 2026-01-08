@@ -126,6 +126,7 @@ function App() {
                     </div>
                     <div className="time-display">{currentTime.toLocaleTimeString('ja-JP', { hour12: false })}</div>
                     <div className="date-display">{currentTime.toLocaleDateString('ja-JP', { weekday: 'short', month: 'long', day: 'numeric' })}</div>
+                    <div style={{ fontSize: '10px', opacity: 0.5, marginTop: '4px' }}>Admin Tracker {APP_VERSION}</div>
                 </div>
 
                 <div className="main-actions">
@@ -204,9 +205,6 @@ function App() {
                     </div>
                 </div>
             )}
-            <div style={{ textAlign: 'center', opacity: 0.3, fontSize: '12px', marginTop: '20px' }}>
-                Admin Tracker {APP_VERSION}
-            </div>
         </div>
     );
 }
