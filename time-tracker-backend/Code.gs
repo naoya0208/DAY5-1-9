@@ -3,21 +3,25 @@ const LINE_ACCESS_TOKEN = 'YOZ7UftinQaO3OyBDaloYu4cXzhYtLzmqBzAGNvCIJRg7h+DoqsX0
 const LINE_GROUP_ID = 'C5a5b36e27a78ed6cfbb74839a8a9d04e';
 
 /**
- * 共通：シート取得（名前の揺れに対応）
+ * 共通：シート取得
  */
 function getSheetSafe(name) {
   if (!name) return null;
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheets = ss.getSheets();
-  const target = String(name).trim();
-  for (let s of sheets) {
-    if (s.getName().trim() === target) return s;
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheets = ss.getSheets();
+    const target = String(name).trim();
+    for (let s of sheets) {
+      if (s.getName().trim() === target) return s;
+    }
+  } catch (e) {
+    console.error("getSheetSafe Error: " + e.message);
   }
   return null;
 }
 
 /**
- * ログ記録（独立した関数として強化）
+ * ログ記録
  */
 function logToSheet(level, message, data = '') {
   try {
@@ -25,8 +29,23 @@ function logToSheet(level, message, data = '') {
     if (sheet) {
       sheet.appendRow([new Date(), level, message, typeof data === 'object' ? JSON.stringify(data) : String(data)]);
     }
+  } catch (e) {}
+}
+
+/**
+ * 診断用：ブラウザで開くと現在のシート状況をダンプする
+ */
+function doGet() {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const result = {
+      status: "Connected",
+      sheets: ss.getSheets().map(s => s.getName()),
+      time: new Date().toString()
+    };
+    return ContentService.createTextOutput(JSON.stringify(result, null, 2)).setMimeType(ContentService.MimeType.JSON);
   } catch (e) {
-    console.error('Log failed: ' + e.toString());
+    return ContentService.createTextOutput("Error: " + e.message);
   }
 }
 
@@ -35,9 +54,10 @@ function logToSheet(level, message, data = '') {
  */
 function doPost(e) {
   try {
-    const contents = (e && e.postData) ? e.postData.contents : "No Data";
+    const contents = (e && e.postData) ? e.postData.contents : null;
+    if (!contents) throw new Error("No payload received");
+    
     logToSheet('INFO', '受信開始', contents);
-
     const data = JSON.parse(contents);
     const { type, traineeId, name, appUrl } = data;
     
@@ -45,8 +65,6 @@ function doPost(e) {
     const dateStr = Utilities.formatDate(now, 'JST', 'yyyy/MM/dd');
     const timeStr = Utilities.formatDate(now, 'JST', 'HH:mm');
     const dateTimeStr = Utilities.formatDate(now, 'JST', 'yyyy/MM/dd HH:mm');
-
-    let result = { status: 'success' };
 
     switch (type) {
       case 'clock-in':
@@ -63,14 +81,50 @@ function doPost(e) {
         handleAssignment(traineeId, name, dateTimeStr, appUrl);
         break;
       default:
-        throw new Error('Unsupported type: ' + type);
+        throw new Error('Unknown type: ' + type);
     }
 
-    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({status: 'success'})).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     logToSheet('ERROR', 'doPost致命的エラー', err.toString());
     return ContentService.createTextOutput(JSON.stringify({status: 'error', message: err.toString()})).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * 共通：対象行を検索する（極限までロバストに）
+ */
+function findRowIndex(sheet, dateStr, traineeId) {
+  const data = sheet.getDataRange().getValues();
+  const targetId = String(traineeId).trim();
+  
+  logToSheet('DEBUG', '行検索開始', {targetDate: dateStr, targetId: targetId});
+
+  for (let i = data.length - 1; i >= 1; i--) {
+    let rawDate = data[i][0];
+    let rowDate = "";
+    
+    // 日付形式の揺れに対応
+    if (rawDate instanceof Date) {
+      rowDate = Utilities.formatDate(rawDate, 'JST', 'yyyy/MM/dd');
+    } else {
+      rowDate = String(rawDate).trim();
+    }
+    
+    const rowId = String(data[i][1]).trim();
+    const rowClockOut = String(data[i][4]).trim();
+
+    // ログに現在チェック中の行を出力（デバッグ用）
+    if (i === data.length - 1) {
+      logToSheet('DEBUG', '最後尾データサンプル', {date: rowDate, id: rowId, out: rowClockOut});
+    }
+
+    // 同一日、同一ID、かつ退勤が未記入の行
+    if (rowDate === dateStr && rowId === targetId && rowClockOut === "") {
+      return i + 1;
+    }
+  }
+  return -1;
 }
 
 /**
@@ -80,10 +134,10 @@ function handleClockIn(traineeId, name, dateStr, timeStr, dateTimeStr) {
   const sheet = getSheetSafe('打刻記録');
   if (!sheet) throw new Error('打刻記録シートが見つかりません');
   
-  sheet.appendRow([dateStr, traineeId, name, timeStr, '', '', '']); // 出勤、退勤空、休憩空、勤務空
+  sheet.appendRow([dateStr, traineeId, name, timeStr, '', '', '']);
   updateMasterSheet(traineeId, name, '勤務中');
   sendLineMessage(`【出勤】\n${name}\n${dateTimeStr}`);
-  logToSheet('INFO', '出勤完了', name);
+  logToSheet('INFO', '出勤記録完了', name);
 }
 
 /**
@@ -91,37 +145,22 @@ function handleClockIn(traineeId, name, dateStr, timeStr, dateTimeStr) {
  */
 function handleClockOut(traineeId, name, dateStr, timeStr) {
   const sheet = getSheetSafe('打刻記録');
-  const data = sheet.getDataRange().getValues();
-  const targetId = String(traineeId).trim();
-  let rowIdx = -1;
-
-  // 最後の未退勤行を探す
-  for (let i = data.length - 1; i >= 1; i--) {
-    let rowDate = data[i][0];
-    if (rowDate instanceof Date) rowDate = Utilities.formatDate(rowDate, 'JST', 'yyyy/MM/dd');
-    const rowId = String(data[i][1]).trim();
-    const rowClockOut = String(data[i][4]).trim();
-
-    if (rowDate === dateStr && rowId === targetId && rowClockOut === '') {
-      rowIdx = i + 1;
-      break;
-    }
-  }
+  const rowIdx = findRowIndex(sheet, dateStr, traineeId);
 
   if (rowIdx !== -1) {
-    const clockInTime = data[rowIdx-1][3];
-    const breakDuration = data[rowIdx-1][5] || '00:00';
+    const data = sheet.getRange(rowIdx, 1, 1, 7).getValues()[0];
+    const clockInTime = data[3];
+    const breakDuration = data[5] || '00:00';
     const workTime = calculateNetWorkTime(clockInTime, timeStr, breakDuration);
     
-    sheet.getRange(rowIdx, 5).setValue(timeStr); // 退勤
-    sheet.getRange(rowIdx, 7).setValue(workTime); // 勤務時間
+    sheet.getRange(rowIdx, 5).setValue(timeStr);
+    sheet.getRange(rowIdx, 7).setValue(workTime);
     
     updateMasterSheet(traineeId, name, '未出勤');
     sendLineMessage(`【退勤】\n${name}\n出勤：${clockInTime}\n退勤：${timeStr}\n休憩：${breakDuration}\n勤務時間：${workTime}`);
-    logToSheet('INFO', '退勤完了', {name: name, workTime: workTime});
+    logToSheet('INFO', '退勤記録完了', name);
   } else {
-    logToSheet('WARN', '退勤対象行なし', {id: targetId, date: dateStr});
-    throw new Error('本日の出勤記録未完了の行が見つかりません');
+    throw new Error('退勤対象の出勤記録が見つかりません（ID:' + traineeId + ' 日付:' + dateStr + '）');
   }
 }
 
@@ -130,25 +169,13 @@ function handleClockOut(traineeId, name, dateStr, timeStr) {
  */
 function handleBreak(traineeId, name, dateStr, timeStr, phase) {
   const sheet = getSheetSafe('打刻記録');
-  const data = sheet.getDataRange().getValues();
-  const targetId = String(traineeId).trim();
-  let rowIdx = -1;
-
-  for (let i = data.length - 1; i >= 1; i--) {
-    let rowDate = data[i][0];
-    if (rowDate instanceof Date) rowDate = Utilities.formatDate(rowDate, 'JST', 'yyyy/MM/dd');
-    const rowId = String(data[i][1]).trim();
-    if (rowDate === dateStr && rowId === targetId && String(data[i][4]).trim() === '') {
-      rowIdx = i + 1;
-      break;
-    }
-  }
+  const rowIdx = findRowIndex(sheet, dateStr, traineeId);
 
   if (rowIdx !== -1) {
     if (phase === 'start') {
       sheet.getRange(rowIdx, 6).setValue('@' + timeStr);
       updateMasterSheet(traineeId, name, '休憩中');
-      logToSheet('INFO', '休憩開始', name);
+      logToSheet('INFO', '休憩開始完了', name);
     } else {
       const val = String(sheet.getRange(rowIdx, 6).getValue());
       if (val.startsWith('@')) {
@@ -156,7 +183,7 @@ function handleBreak(traineeId, name, dateStr, timeStr, phase) {
         sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(diff));
       }
       updateMasterSheet(traineeId, name, '勤務中');
-      logToSheet('INFO', '休憩終了', name);
+      logToSheet('INFO', '休憩終了完了', name);
     }
   } else {
     logToSheet('WARN', '休憩対象行なし', name);
@@ -169,10 +196,8 @@ function handleBreak(traineeId, name, dateStr, timeStr, phase) {
 function handleAssignment(traineeId, name, dateTimeStr, appUrl) {
   const sheet = getSheetSafe('課題完了記録');
   if (!sheet) throw new Error('課題完了記録シートが見つかりません');
-  
   sheet.appendRow([dateTimeStr, traineeId, name, appUrl, '未確認']);
   sendLineMessage(`【🎉課題完了報告🎉】\n研修生：${name}\n完了：${dateTimeStr}\nURL: ${appUrl}`);
-  logToSheet('INFO', '課題完了報告', name);
 }
 
 /**
@@ -180,10 +205,8 @@ function handleAssignment(traineeId, name, dateTimeStr, appUrl) {
  */
 function updateMasterSheet(traineeId, name, status) {
   const sheet = getSheetSafe('研修生マスタ');
-  if (!sheet) {
-    logToSheet('ERROR', '研修生マスタが見つかりません');
-    return;
-  }
+  if (!sheet) return;
+  
   const data = sheet.getDataRange().getValues();
   const targetId = String(traineeId).trim();
   let rowIdx = -1;
@@ -198,11 +221,10 @@ function updateMasterSheet(traineeId, name, status) {
   } else {
     sheet.appendRow([traineeId, name, status]);
   }
-  logToSheet('INFO', 'マスタ更新', {id: targetId, status: status});
 }
 
 /**
- * ユーティリティ：時間計算
+ * ユーティリティ
  */
 function calculateNetWorkTime(start, end, breakStr) {
   const s = timeToMinutes(start);
@@ -220,8 +242,9 @@ function getDiffInMinutes(s, e) {
 }
 
 function timeToMinutes(str) {
-  if (!str || !String(str).includes(':')) return 0;
-  const p = String(str).split(':');
+  const t = String(str);
+  if (!t.includes(':')) return 0;
+  const p = t.split(':');
   return parseInt(p[0]) * 60 + parseInt(p[1]);
 }
 
@@ -233,9 +256,8 @@ function formatMinutesToHHMM(m) {
 }
 
 function sendLineMessage(text) {
-  const url = 'https://api.line.me/v2/bot/message/push';
   try {
-    UrlFetchApp.fetch(url, {
+    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
       method: 'post',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN },
       payload: JSON.stringify({ to: LINE_GROUP_ID, messages: [{ type: 'text', text: text }] }),
