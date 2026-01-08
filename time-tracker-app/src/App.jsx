@@ -43,7 +43,6 @@ function App() {
             await fetch(GAS_URL, {
                 method: 'POST',
                 mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     type,
                     traineeId: userInfo.id,
