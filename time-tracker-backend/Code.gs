@@ -1,23 +1,16 @@
-/**
- * 出退勤管理アプリ バックエンド (Google Apps Script)
- * 仕様に基づき、打刻記録、休憩計算、LINE通知、課題完了報告を処理します。
- */
-
-// ユーザー設定 (LINEの設定)
-const LINE_ACCESS_TOKEN = 'YOZ7UftinQaO3OyBDaloYu4cXzhYtLzmqBzAGNvCIJRg7h+DoqsX0n6OXdfOFZ9vI7/+VIOKgdWLHJ6yBmeAi6kPqz4+FZ3vpHQTBEAQSHA81c9tQLH/8oP8UUyRpnHxvmJ0QlaAjZWiraJeO38tBgdB04t89/1O/w1cDnyilFU=';
-const LINE_GROUP_ID = 'C5a5b36e27a78ed6cfbb74839a8a9d04e';
+const SPREADSHEET_ID = '1MOzxb7RKuxVMHQI7djPIu2iw6Hf3GLeg71_9oQi6FS8';
 
 /**
  * 初回セットアップ用関数
- * スプシに必要なシートを作成し、ヘッダーを書き込みます。
  */
 function setupSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   
   const sheets = [
     { name: '打刻記録', header: ['日付', '研修生ID', '氏名', '出勤時刻', '退勤時刻', '休憩時間', '勤務時間'] },
     { name: '課題完了記録', header: ['完了日時', '研修生ID', '氏名', 'アプリURL', '判定'] },
-    { name: '研修生マスタ', header: ['研修生ID', '氏名', 'ステータス'] }
+    { name: '研修生マスタ', header: ['研修生ID', '氏名', 'ステータス'] },
+    { name: '設定・ログ', header: ['日時', 'レベル', 'メッセージ', '詳細データ'] }
   ];
 
   sheets.forEach(s => {
@@ -28,7 +21,22 @@ function setupSheet() {
     }
   });
   
-  SpreadsheetApp.getUi().alert('セットアップが完了しました！');
+  SpreadsheetApp.getUi().alert('セットアップが完了しました！「設定・ログ」シートを確認してください。');
+}
+
+/**
+ * ログ記録用関数
+ */
+function logToSheet(level, message, data = '') {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName('設定・ログ');
+    if (sheet) {
+      sheet.appendRow([new Date(), level, message, typeof data === 'object' ? JSON.stringify(data) : data]);
+    }
+  } catch (e) {
+    console.error('Logging failed: ' + e.toString());
+  }
 }
 
 /**
@@ -36,11 +44,18 @@ function setupSheet() {
  */
 function doPost(e) {
   try {
+    if (!e || !e.postData || !e.postData.contents) {
+      logToSheet('ERROR', 'PostData is empty');
+      throw new Error('受取ったデータが空です');
+    }
+
     const contents = e.postData.contents;
+    logToSheet('INFO', 'Received data', contents);
+
     const data = JSON.parse(contents);
     const { type, traineeId, name, appUrl } = data;
     
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const now = new Date();
     const dateStr = Utilities.formatDate(now, 'JST', 'yyyy/MM/dd');
     const timeStr = Utilities.formatDate(now, 'JST', 'HH:mm');
@@ -71,7 +86,7 @@ function doPost(e) {
     return ContentService.createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
-    console.error(err.toString());
+    logToSheet('ERROR', 'Exception in doPost', err.toString());
     return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   }
@@ -79,12 +94,18 @@ function doPost(e) {
 
 function handleClockIn(ss, traineeId, name, dateStr, timeStr, dateTimeStr) {
   const sheet = ss.getSheetByName('打刻記録');
+  if (!sheet) {
+    logToSheet('ERROR', 'Sheet "打刻記録" not found');
+    throw new Error('「打刻記録」シートが見つかりません');
+  }
   sheet.appendRow([dateStr, traineeId, name, timeStr, '', '', '']);
   sendLineMessage(`【出勤】\n${name}\n${dateTimeStr}`);
 }
 
 function handleClockOut(ss, traineeId, name, dateStr, timeStr) {
   const sheet = ss.getSheetByName('打刻記録');
+  if (!sheet) throw new Error('「打刻記録」シートが見つかりません');
+  
   const data = sheet.getDataRange().getValues();
   let rowIdx = -1;
   
@@ -106,12 +127,15 @@ function handleClockOut(ss, traineeId, name, dateStr, timeStr) {
     sheet.getRange(rowIdx, 7).setValue(workTime);
     sendLineMessage(`【退勤】\n${name}\n出勤：${clockInTimeStr}\n退勤：${timeStr}\n休憩：${breakDuration}\n勤務時間：${workTime}`);
   } else {
+    logToSheet('WARN', 'Clock-out record not found for ' + name, { date: dateStr, id: traineeId });
     throw new Error('当日の出勤記録が見つかりません');
   }
 }
 
 function handleBreak(ss, traineeId, name, dateStr, timeStr, phase) {
   const sheet = ss.getSheetByName('打刻記録');
+  if (!sheet) throw new Error('「打刻記録」シートが見つかりません');
+  
   const data = sheet.getDataRange().getValues();
   let rowIdx = -1;
   for (let i = data.length - 1; i >= 1; i--) {
@@ -134,11 +158,15 @@ function handleBreak(ss, traineeId, name, dateStr, timeStr, phase) {
         sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(diffMin));
       }
     }
+  } else {
+    logToSheet('WARN', 'Break record row not found for ' + name);
   }
 }
 
 function handleAssignment(ss, traineeId, name, dateTimeStr, appUrl) {
   const sheet = ss.getSheetByName('課題完了記録');
+  if (!sheet) throw new Error('「課題完了記録」シートが見つかりません');
+  
   sheet.appendRow([dateTimeStr, traineeId, name, appUrl, '未確認']);
   sendLineMessage(`【🎉課題完了報告🎉】\n研修生：${name}（${traineeId}）\n完了：${dateTimeStr}\nアプリURL: ${appUrl}\n確認をお願いします！`);
 }
@@ -146,13 +174,16 @@ function handleAssignment(ss, traineeId, name, dateTimeStr, appUrl) {
 function sendLineMessage(text) {
   const url = 'https://api.line.me/v2/bot/message/push';
   try {
-    UrlFetchApp.fetch(url, {
+    const options = {
       method: 'post',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN },
       payload: JSON.stringify({ to: LINE_GROUP_ID, messages: [{ type: 'text', text: text }] }),
       muteHttpExceptions: true
-    });
-  } catch (e) { console.error(e); }
+    };
+    UrlFetchApp.fetch(url, options);
+  } catch (e) { 
+    logToSheet('ERROR', 'LINE delivery failed', e.toString());
+  }
 }
 
 function calculateNetWorkTime(startStr, endStr, breakDurStr) {
