@@ -4,7 +4,7 @@ import { Coffee, CheckCircle, LogOut, Play, Settings, User, Clock, Bell } from '
 // 注意: このURLはGASをデプロイした後に更新する必要があります
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyesUZOdJB_JSsCsUDZpUGYnzH4GXhAlX8Js2AYzp27lG8Y8xKjHU9I-uZw9nOofUvK/exec';
 
-const APP_VERSION = 'v2.2.0 (Force Clear)';
+const APP_VERSION = 'v2.2.0 (Updated)';
 
 function App() {
     const [status, setStatus] = useState(() => localStorage.getItem('tracker_status') || 'idle');
