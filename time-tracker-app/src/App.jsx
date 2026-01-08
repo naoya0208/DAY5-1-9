@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Coffee, CheckCircle, LogOut, Play, Settings, User, Clock, Bell } from 'lucide-react';
 
 // 注意: このURLはGASをデプロイした後に更新する必要があります
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbz2EKqIwUtc9aFRePxQoDj5UELzcIxJC_Z6CI_vlRpa3cnP26IvrLRaEjY29ExRUUj-/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycby0_fBZh7NCovCSED-qgRROuILfY0iq3YsXDYx_BrRySLs_3RAD6rKI9sAJ5NkmXzoI/exec';
 
 function App() {
     const [status, setStatus] = useState(() => localStorage.getItem('tracker_status') || 'idle');
