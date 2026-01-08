@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-    base: '/DAY5/',
+    base: '/DAY5-1-9/',
     plugins: [
         react(),
         VitePWA({
