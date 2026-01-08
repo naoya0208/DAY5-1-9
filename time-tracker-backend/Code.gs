@@ -6,9 +6,10 @@ const LINE_GROUP_ID = 'C5a5b36e27a78ed6cfbb74839a8a9d04e';
  * 共通：シート取得（名前の揺れに対応）
  */
 function getSheetSafe(name) {
+  if (!name) return null;
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheets = ss.getSheets();
-  const target = name.trim();
+  const target = String(name).trim();
   for (let s of sheets) {
     if (s.getName().trim() === target) return s;
   }
