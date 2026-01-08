@@ -10,7 +10,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 )
 
 if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js');
+    navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        for (let registration of registrations) {
+            registration.unregister();
+            console.log('[SW] Unregistered existing service worker');
+        }
     });
+
+    // 以前のキャッシュも削除を試みる
+    if (window.caches) {
+        caches.keys().then(function (names) {
+            for (let name of names) caches.delete(name);
+        });
+    }
 }
