@@ -1,296 +1,287 @@
-// Code.gs
+const SPREADSHEET_ID = '1MOzxb7RKuxVMHQI7djPIu2iw6Hf3GLeg71_9oQi6FS8';
+const LINE_ACCESS_TOKEN = 'YOZ7UftinQaO3OyBDaloYu4cXzhYtLzmqBzAGNvCIJRg7h+DoqsX0n6OXdfOFZ9vI7/+VIOKgdWLHJ6yBmeAi6kPqz4+FZ3vpHQTBEAQSHA81c9tQLH/8oP8UUyRpnHxvmJ0QlaAjZWiraJeO38tBgdB04t89/1O/w1cDnyilFU=';
+const LINE_GROUP_ID = 'C5a5b36e27a78ed6cfbb74839a8a9d04e';
 
 /**
- * スプレッドシート起動時にカスタムメニューを追加
+ * シート取得（空白対策）
  */
-function onOpen() {
-  const ui = SpreadsheetApp.getUi();
-  ui.createMenu('📄 ドキュメント処理')
-    .addItem('PDF送信', 'sendPdfWithSummary')
-    .addSeparator()
-    .addItem('5分間隔実行開始', 'startAutoExecution')
-    .addItem('自動実行停止', 'stopAutoExecution')
-    .addToUi();
+function getSheetSafe(name) {
+  if (!name) return null;
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const target = String(name).trim();
+  for (let s of ss.getSheets()) {
+    if (s.getName().trim() === target) return s;
+  }
+  return null;
 }
 
 /**
- * URLからドキュメントIDを抽出
- * @param {string} url - GoogleドキュメントのURL
- * @return {string} - 抽出されたドキュメントID
+ * ログ記録
  */
-function extractDocIdFromUrl(url) {
-  if (!url || url.trim() === '') {
-    throw new Error('URLが入力されていません');
-  }
-  
-  // URLからドキュメントIDを抽出
-  // パターン: https://docs.google.com/document/d/{ID}/edit...
-  const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
-  
-  if (match && match[1]) {
-    return match[1];
-  } else {
-    throw new Error('有効なGoogleドキュメントのURLではありません');
-  }
-}
-
-/**
- * メイン処理：ドキュメントをPDF化して要約付きメール送信
- */
-function sendPdfWithSummary() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  const startTime = new Date();
-  
+function logToSheet(level, message, data = '') {
   try {
-    // A1セルからURLを取得
-    const docUrl = sheet.getRange('A1').getValue();
-    
-    if (!docUrl || docUrl.trim() === '') {
-      throw new Error('A1セルにドキュメントURLが入力されていません');
+    const sheet = getSheetSafe('設定・ログ');
+    if (sheet) {
+      sheet.appendRow([new Date(), level, message, typeof data === 'object' ? JSON.stringify(data) : String(data)]);
     }
-    
-    // URLからドキュメントIDを抽出
-    const docId = extractDocIdFromUrl(docUrl);
-    
-    // A2セルに抽出したドキュメントIDを表示
-    sheet.getRange('A2').setValue(docId);
-    
-    // スクリプトプロパティから設定を取得
-    const props = PropertiesService.getScriptProperties();
-    const mailTo = props.getProperty('MAIL_TO');
-    const mailSubject = props.getProperty('MAIL_SUBJECT');
-    const geminiApiKey = props.getProperty('GEMINI_API_KEY');
-    
-    if (!mailTo || !mailSubject || !geminiApiKey) {
-      throw new Error('スクリプトプロパティが正しく設定されていません');
+  } catch (e) {}
+}
+
+/**
+ * ✅ 診断用ツール：ブラウザで開くと最新10件のログと現在の状態を表示
+ */
+function doGet() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const logSheet = getSheetSafe('設定・ログ');
+  let recentLogs = [];
+  
+  if (logSheet) {
+    const lastRow = logSheet.getLastRow();
+    if (lastRow > 1) {
+      recentLogs = logSheet.getRange(Math.max(2, lastRow - 9), 1, Math.min(10, lastRow - 1), 4).getDisplayValues();
     }
+  }
+
+  const status = {
+    message: "✅ GAS接続成功！",
+    sheets: ss.getSheets().map(s => s.getName()),
+    time: Utilities.formatDate(new Date(), 'JST', 'yyyy/MM/dd HH:mm:ss'),
+    recentLogs: recentLogs.map(row => ({ time: row[0], level: row[1], msg: row[2], data: row[3] }))
+  };
+
+  return ContentService.createTextOutput(JSON.stringify(status, null, 2)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * メイン：POST受信
+ */
+function doPost(e) {
+  try {
+    const contents = (e && e.postData) ? e.postData.contents : null;
+    if (!contents) throw new Error("データが届いていません");
     
-    // 1. ドキュメント内容を取得
-    const doc = DocumentApp.openById(docId);
-    const docText = doc.getBody().getText();
-    const docTitle = doc.getName();
+    logToSheet('INFO', '受信開始', contents);
+    const data = JSON.parse(contents);
+    const { type, traineeId, name, appUrl } = data;
     
-    // 2. Gemini APIで要約生成
-    const summary = generateSummaryWithGemini(docText, geminiApiKey);
-    
-    // 3. Drive API v3でPDF変換
-    const pdfBlob = convertDocToPdf(docId, docTitle);
-    
-    // 4. Gmail APIでメール送信
-    sendEmailWithPdf(mailTo, mailSubject, summary, pdfBlob, docTitle);
-    
-    // 5. 実行完了ログをスプレッドシートに記録
-    const endTime = new Date();
-    sheet.getRange('B2').setValue('実行完了');
-    sheet.getRange('C2').setValue(Utilities.formatDate(endTime, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm:ss'));
-    
-    SpreadsheetApp.getUi().alert('✅ PDF送信が完了しました！');
-    
-  } catch (error) {
-    // エラー処理
-    sheet.getRange('B2').setValue('エラー: ' + error.message);
-    sheet.getRange('C2').setValue(Utilities.formatDate(startTime, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm:ss'));
-    
-    SpreadsheetApp.getUi().alert('❌ エラーが発生しました：\n' + error.message);
-    Logger.log('エラー詳細: ' + error);
+    const now = new Date();
+    const dateStr = Utilities.formatDate(now, 'JST', 'yyyy/MM/dd');
+    const timeStr = Utilities.formatDate(now, 'JST', 'HH:mm');
+    const dateTimeStr = Utilities.formatDate(now, 'JST', 'yyyy/MM/dd HH:mm');
+
+    switch (type) {
+      case 'clock-in':
+        handleClockIn(traineeId, name, dateStr, timeStr, dateTimeStr);
+        break;
+      case 'clock-out':
+        handleClockOut(traineeId, name, dateStr, timeStr);
+        break;
+      case 'break-start':
+      case 'break-end':
+        handleBreak(traineeId, name, dateStr, timeStr, type === 'break-start' ? 'start' : 'end');
+        break;
+      case 'assignment':
+        handleAssignment(traineeId, name, dateTimeStr, appUrl);
+        break;
+      default:
+        throw new Error('不明な種別: ' + type);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({status: 'success'})).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    logToSheet('ERROR', 'doPostエラー', err.toString());
+    return ContentService.createTextOutput(JSON.stringify({status: 'error', message: err.toString()})).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
 /**
- * Gemini APIを使ってテキストを要約（リトライ機能付き）
+ * 共通：行検索（getDisplayValuesを使用して見た目通りに比較）
  */
-function generateSummaryWithGemini(text, apiKey) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+function findRowIndex(sheet, dateStr, traineeId) {
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  const targetId = String(traineeId).trim();
   
-  const payload = {
-    contents: [{
-      parts: [{
-        text: `以下の文書を300文字程度で要約してください：\n\n${text}`
-      }]
-    }]
-  };
-  
-  const options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
-  
-  // リトライロジック（最大3回試行）
-  const maxRetries = 3;
-  let lastError = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const response = UrlFetchApp.fetch(url, options);
-      const responseCode = response.getResponseCode();
-      const responseText = response.getContentText();
-      
-      // レスポンスコードをログに記録
-      Logger.log(`API Response Code (試行 ${attempt}/${maxRetries}): ${responseCode}`);
-      
-      // 429エラー（レート制限）の場合はリトライ
-      if (responseCode === 429) {
-        const waitTime = attempt * 5; // 5秒、10秒、15秒と増加
-        Logger.log(`レート制限エラー。${waitTime}秒待機してリトライします...`);
-        Utilities.sleep(waitTime * 1000);
-        lastError = new Error(`レート制限エラー（試行 ${attempt}/${maxRetries}）`);
-        continue; // 次の試行へ
-      }
-      
-      // その他の200以外のエラー
-      if (responseCode !== 200) {
-        throw new Error(`Gemini API エラー (${responseCode}): ${responseText}`);
-      }
-      
-      const json = JSON.parse(responseText);
-      
-      // エラーレスポンスをチェック
-      if (json.error) {
-        throw new Error(`Gemini API エラー: ${json.error.message || JSON.stringify(json.error)}`);
-      }
-      
-      // コンテンツフィルタリングをチェック
-      if (json.candidates && json.candidates[0]) {
-        const candidate = json.candidates[0];
-        
-        // finishReasonをチェック
-        if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-          throw new Error(`コンテンツが生成できませんでした。理由: ${candidate.finishReason}`);
-        }
-        
-        // 正常なレスポンス
-        if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
-          Logger.log(`要約生成成功（試行 ${attempt}/${maxRetries}）`);
-          return candidate.content.parts[0].text;
-        }
-      }
-      
-      // 予期しないレスポンス形式
-      throw new Error('Gemini APIからの要約生成に失敗しました。レスポンス: ' + responseText.substring(0, 200));
-      
-    } catch (error) {
-      // エラーの詳細をログに記録
-      Logger.log(`Gemini API エラー詳細 (試行 ${attempt}/${maxRetries}): ${error}`);
-      lastError = error;
-      
-      // 最後の試行でない場合は少し待機
-      if (attempt < maxRetries) {
-        Utilities.sleep(2000); // 2秒待機
-      }
+  logToSheet('DEBUG', '行検索開始', {targetDate: dateStr, targetId: targetId});
+
+  for (let i = displayValues.length - 1; i >= 1; i--) {
+    let rowDateStr = displayValues[i][0]; // "2026/01/09" 形式
+    const rowId = displayValues[i][1].trim();
+    const rowClockOut = displayValues[i][4].trim();
+
+    // 日付オブジェクトの場合も考慮
+    let rowDateObjFormatted = "";
+    if (values[i][0] instanceof Date) {
+      rowDateObjFormatted = Utilities.formatDate(values[i][0], 'JST', 'yyyy/MM/dd');
+    }
+
+    // 日付、IDが一致し、退勤がまだ空の行
+    if ((rowDateStr === dateStr || rowDateObjFormatted === dateStr) && rowId === targetId && rowClockOut === "") {
+      logToSheet('DEBUG', '行一致', {row: i + 1});
+      return i + 1;
     }
   }
-  
-  // すべてのリトライが失敗した場合
-  throw new Error(`要約生成に失敗しました（${maxRetries}回試行）: ${lastError.message}`);
+  logToSheet('WARN', '行が見つかりませんでした', {date: dateStr, id: targetId});
+  return -1;
 }
 
 /**
- * Drive API v3を使ってドキュメントをPDFに変換
+ * 1. 出勤
  */
-function convertDocToPdf(docId, docTitle) {
-  const url = `https://www.googleapis.com/drive/v3/files/${docId}/export?mimeType=application/pdf`;
+function handleClockIn(traineeId, name, dateStr, timeStr, dateTimeStr) {
+  const sheet = getSheetSafe('打刻記録');
+  if (!sheet) throw new Error('打刻記録シートが見つかりません');
   
-  const options = {
-    method: 'get',
-    headers: {
-      'Authorization': 'Bearer ' + ScriptApp.getOAuthToken()
-    },
-    muteHttpExceptions: true
-  };
-  
-  const response = UrlFetchApp.fetch(url, options);
-  
-  if (response.getResponseCode() === 200) {
-    return response.getBlob().setName(docTitle + '.pdf');
+  sheet.appendRow([dateStr, traineeId, name, timeStr, '', '', '']);
+  updateMasterSheet(traineeId, name, '勤務中');
+  sendLineMessage(`【出勤】\n${name}\n${dateTimeStr}`);
+  logToSheet('INFO', '出勤完了', name);
+}
+
+/**
+ * 2. 退勤
+ */
+function handleClockOut(traineeId, name, dateStr, timeStr) {
+  const sheet = getSheetSafe('打刻記録');
+  const rowIdx = findRowIndex(sheet, dateStr, traineeId);
+
+  if (rowIdx !== -1) {
+    const range = sheet.getRange(rowIdx, 1, 1, 7);
+    const displayData = range.getDisplayValues()[0];
+    const clockInTime = displayData[3];
+    const breakDuration = displayData[5] || '00:00';
+    
+    // 計算
+    const workTime = calculateNetWorkTime(clockInTime, timeStr, breakDuration);
+    
+    sheet.getRange(rowIdx, 5).setValue(timeStr);
+    sheet.getRange(rowIdx, 7).setValue(workTime);
+    
+    updateMasterSheet(traineeId, name, '未出勤');
+    sendLineMessage(`【退勤】\n${name}\n出勤：${clockInTime}\n退勤：${timeStr}\n休憩：${breakDuration}\n勤務時間：${workTime}`);
   } else {
-    throw new Error('PDF変換に失敗しました: ' + response.getContentText());
+    throw new Error('退勤対象の出勤記録（退勤未記入の行）が見つかりません');
   }
 }
 
 /**
- * Gmail APIでPDF添付メールを送信
+ * 3. 休憩
  */
-function sendEmailWithPdf(to, subject, summary, pdfBlob, docTitle) {
-  const boundary = "boundary_" + Utilities.getUuid();
-  
-  const mailBody = `
-ドキュメント「${docTitle}」のPDFをお送りします。
+function handleBreak(traineeId, name, dateStr, timeStr, phase) {
+  const sheet = getSheetSafe('打刻記録');
+  const rowIdx = findRowIndex(sheet, dateStr, traineeId);
 
-【要約】
-${summary}
-
----
-このメールは自動送信されています。
-`;
-  
-  // メールをマルチパート形式で構築
-  let mailData = "";
-  mailData += "MIME-Version: 1.0\r\n";
-  mailData += "To: " + to + "\r\n";
-  mailData += "Subject: " + subject + "\r\n";
-  mailData += "Content-Type: multipart/mixed; boundary=" + boundary + "\r\n\r\n";
-  
-  // テキスト部分
-  mailData += "--" + boundary + "\r\n";
-  mailData += "Content-Type: text/plain; charset=UTF-8\r\n\r\n";
-  mailData += mailBody + "\r\n\r\n";
-  
-  // PDF添付部分
-  mailData += "--" + boundary + "\r\n";
-  mailData += "Content-Type: application/pdf; name=\"" + pdfBlob.getName() + "\"\r\n";
-  mailData += "Content-Transfer-Encoding: base64\r\n";
-  mailData += "Content-Disposition: attachment; filename=\"" + pdfBlob.getName() + "\"\r\n\r\n";
-  mailData += Utilities.base64Encode(pdfBlob.getBytes()) + "\r\n\r\n";
-  mailData += "--" + boundary + "--";
-  
-  // Gmail APIで送信
-  const url = "https://www.googleapis.com/gmail/v1/users/me/messages/send";
-  const options = {
-    method: 'post',
-    headers: {
-      'Authorization': 'Bearer ' + ScriptApp.getOAuthToken(),
-      'Content-Type': 'message/rfc822'
-    },
-    payload: mailData,
-    muteHttpExceptions: true
-  };
-  
-  const response = UrlFetchApp.fetch(url, options);
-  
-  if (response.getResponseCode() !== 200) {
-    throw new Error('メール送信に失敗しました: ' + response.getContentText());
-  }
-}
-
-/**
- * 5分間隔の自動実行を開始
- */
-function startAutoExecution() {
-  // 既存のトリガーを削除
-  stopAutoExecution();
-  
-  // 新しいトリガーを作成
-  ScriptApp.newTrigger('sendPdfWithSummary')
-    .timeBased()
-    .everyMinutes(5)
-    .create();
-  
-  SpreadsheetApp.getUi().alert('✅ 5分間隔の自動実行を開始しました');
-}
-
-/**
- * 自動実行を停止
- */
-function stopAutoExecution() {
-  const triggers = ScriptApp.getProjectTriggers();
-  
-  for (let trigger of triggers) {
-    if (trigger.getHandlerFunction() === 'sendPdfWithSummary') {
-      ScriptApp.deleteTrigger(trigger);
+  if (rowIdx !== -1) {
+    if (phase === 'start') {
+      sheet.getRange(rowIdx, 6).setValue('@' + timeStr);
+      updateMasterSheet(traineeId, name, '休憩中');
+      logToSheet('INFO', '休憩開始', name);
+    } else {
+      const val = String(sheet.getRange(rowIdx, 6).getValue());
+      if (val.startsWith('@')) {
+        const diff = getDiffInMinutes(val.substring(1), timeStr);
+        sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(diff));
+      }
+      updateMasterSheet(traineeId, name, '勤務中');
+      logToSheet('INFO', '休憩終了', name);
     }
   }
+}
+
+/**
+ * 4. 課題完了 (確実に反映させるためにロジックを整理)
+ */
+function handleAssignment(traineeId, name, dateTimeStr, appUrl) {
+  const sheet = getSheetSafe('課題完了記録');
+  if (!sheet) {
+    logToSheet('ERROR', '課題完了記録シートが見つかりません');
+    throw new Error('課題完了記録シートが見つかりません');
+  }
   
-  SpreadsheetApp.getUi().alert('✅ 自動実行を停止しました');
+  // 確実に追記
+  sheet.appendRow([dateTimeStr, traineeId, name, appUrl, '未確認']);
+  
+  // LINE通知
+  sendLineMessage(`【🎉課題完了報告🎉】\n研修生：${name}\n完了：${dateTimeStr}\nURL: ${appUrl}`);
+  
+  logToSheet('INFO', '課題完了報告を記録しました', {name: name, url: appUrl});
+}
+
+/**
+ * 共通：マスタ更新 (他シートが動かない原因をここで解消)
+ */
+function updateMasterSheet(traineeId, name, status) {
+  const sheet = getSheetSafe('研修生マスタ');
+  if (!sheet) {
+    logToSheet('ERROR', '研修生マスタのシートが見つかりません');
+    return;
+  }
+
+  const data = sheet.getDataRange().getDisplayValues();
+  const targetId = String(traineeId).trim();
+  let rowIdx = -1;
+
+  // 1行目はヘッダーなので2行目から探索
+  for (let i = 1; i < data.length; i++) {
+    const rowId = String(data[i][0]).trim();
+    if (rowId === targetId) {
+      rowIdx = i + 1;
+      break;
+    }
+  }
+
+  if (rowIdx !== -1) {
+    // 既存ユーザーの更新
+    sheet.getRange(rowIdx, 2).setValue(name);
+    sheet.getRange(rowIdx, 3).setValue(status);
+    logToSheet('INFO', 'マスタ更新成功', {id: targetId, status: status});
+  } else {
+    // 新規ユーザーの追加
+    sheet.appendRow([targetId, name, status]);
+    logToSheet('INFO', 'マスタ新規追加成功', {id: targetId, name: name, status: status});
+  }
+}
+
+/**
+ * ユーティリティ
+ */
+function calculateNetWorkTime(start, end, breakStr) {
+  const s = timeToMinutes(start);
+  const e = timeToMinutes(end);
+  let diff = e - s;
+  if (diff < 0) diff += 24 * 60;
+  const b = timeToMinutes(String(breakStr).replace('@', ''));
+  return formatMinutesToHHMM(diff - b);
+}
+
+function getDiffInMinutes(s, e) {
+  let d = timeToMinutes(e) - timeToMinutes(s);
+  if (d < 0) d += 24 * 60;
+  return d;
+}
+
+function timeToMinutes(str) {
+  const t = String(str);
+  if (!t.includes(':')) return 0;
+  const p = t.split(':');
+  return parseInt(p[0]) * 60 + parseInt(p[1]);
+}
+
+function formatMinutesToHHMM(m) {
+  const mm = Math.max(0, m);
+  const h = Math.floor(mm / 60);
+  const min = mm % 60;
+  return `${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+}
+
+function sendLineMessage(text) {
+  try {
+    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'post',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN },
+      payload: JSON.stringify({ to: LINE_GROUP_ID, messages: [{ type: 'text', text: text }] }),
+      muteHttpExceptions: true
+    });
+  } catch (e) { logToSheet('ERROR', 'LINE送信失敗', e.toString()); }
 }
