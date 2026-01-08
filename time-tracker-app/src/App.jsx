@@ -4,6 +4,8 @@ import { Coffee, CheckCircle, LogOut, Play, Settings, User, Clock, Bell } from '
 // 注意: このURLはGASをデプロイした後に更新する必要があります
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyesUZOdJB_JSsCsUDZpUGYnzH4GXhAlX8Js2AYzp27lG8Y8xKjHU9I-uZw9nOofUvK/exec';
 
+const APP_VERSION = 'v2.1.0';
+
 function App() {
     const [status, setStatus] = useState(() => localStorage.getItem('tracker_status') || 'idle');
     const [currentTime, setCurrentTime] = useState(new Date());
@@ -19,6 +21,7 @@ function App() {
     const [tempUserInfo, setTempUserInfo] = useState(userInfo);
 
     useEffect(() => {
+        console.log(`[App] Initializing Version: ${APP_VERSION}`);
         const timer = setInterval(() => setCurrentTime(new Date()), 1000);
         return () => clearInterval(timer);
     }, []);
@@ -38,19 +41,26 @@ function App() {
             return;
         }
 
+        const payload = {
+            type,
+            traineeId: userInfo.id,
+            name: userInfo.name,
+            appUrl: window.location.href,
+            ...extraData
+        };
+
+        console.log(`[App] Sending ${type} to GAS...`, payload);
+        console.log(`[App] GAS_URL: ${GAS_URL}`);
+
         setLoading(true);
         try {
             await fetch(GAS_URL, {
                 method: 'POST',
                 mode: 'no-cors',
-                body: JSON.stringify({
-                    type,
-                    traineeId: userInfo.id,
-                    name: userInfo.name,
-                    appUrl: window.location.href,
-                    ...extraData
-                }),
+                body: JSON.stringify(payload),
             });
+
+            console.log(`[App] ${type} request sent successfully (mode: no-cors)`);
 
             if (type === 'clock-in') {
                 setStatus('working');
@@ -194,6 +204,9 @@ function App() {
                     </div>
                 </div>
             )}
+            <div style={{ textAlign: 'center', opacity: 0.3, fontSize: '12px', marginTop: '20px' }}>
+                Admin Tracker {APP_VERSION}
+            </div>
         </div>
     );
 }
