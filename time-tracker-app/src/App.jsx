@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Coffee, CheckCircle, LogOut, Play, Settings, User, Clock, Bell } from 'lucide-react';
 
 // 注意: このURLはGASをデプロイした後に更新する必要があります
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyesUZOdJB_JSsCsUDZpUGYnzH4GXhAlX8Js2AYzp27lG8Y8xKjHU9I-uZw9nOofUvK/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyr8Pz_yC29F-OTvgqrQkkIzt5GuWJQXcmx-9-QgACep1ikjWqQ3dEsDWGzO4H1ko0/exec';
 
 const APP_VERSION = 'v2.2.0 (Updated)';
 

@@ -7,7 +7,8 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <script>
-        // 強制リロードスクリプト
+        // 強制リロードスクリプト (PWA化のために無効化)
+        /*
         (function () {
             const RELOAD_KEY = 'force_reload_v2_2';
             if (!sessionStorage.getItem(RELOAD_KEY)) {
@@ -20,15 +21,17 @@
                 window.location.reload(true);
             }
         })();
+        */
     </script>
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/DAY5-1-9/pwa-192x192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="manifest" href="/DAY5-1-9/manifest.json" />
+
     <title>出退勤管理アプリ</title>
-  <script type="module" crossorigin src="/DAY5-1-9/assets/index-C9ATrUJi.js"></script>
+  <script type="module" crossorigin src="/DAY5-1-9/assets/index-SSQRpECs.js"></script>
   <link rel="stylesheet" crossorigin href="/DAY5-1-9/assets/index-iUW4VP-C.css">
 <link rel="manifest" href="/DAY5-1-9/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/DAY5-1-9/registerSW.js"></script></head>
 
