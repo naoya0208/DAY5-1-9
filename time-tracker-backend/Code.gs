@@ -95,35 +95,70 @@ function doPost(e) {
 }
 
 /**
- * 共通：行検索（getDisplayValuesを使用して見た目通りに比較）
+ * 共通：行検索（見た目 + 正規化で最強の検索）
  */
 function findRowIndex(sheet, dateStr, traineeId) {
   const range = sheet.getDataRange();
   const values = range.getValues();
   const displayValues = range.getDisplayValues();
   const targetId = String(traineeId).trim();
+  const targetDateNorm = normalizeDate(dateStr);
   
-  logToSheet('DEBUG', '行検索開始', {targetDate: dateStr, targetId: targetId});
+  logToSheet('DEBUG', '行検索開始', {targetDate: dateStr, targetId: targetId, normDate: targetDateNorm});
 
   for (let i = displayValues.length - 1; i >= 1; i--) {
-    let rowDateStr = displayValues[i][0]; // "2026/01/09" 形式
-    const rowId = displayValues[i][1].trim();
-    const rowClockOut = displayValues[i][4].trim();
+    // 1. 表示文字列での比較
+    const rowDateStr = String(displayValues[i][0]).trim();
+    const rowId = String(displayValues[i][1]).trim();
+    const rowClockOut = String(displayValues[i][4]).trim();
 
-    // 日付オブジェクトの場合も考慮
-    let rowDateObjFormatted = "";
+    // 2. 日付オブジェクトからの変換比較
+    let rowDateObjStr = "";
     if (values[i][0] instanceof Date) {
-      rowDateObjFormatted = Utilities.formatDate(values[i][0], 'JST', 'yyyy/MM/dd');
+      rowDateObjStr = Utilities.formatDate(values[i][0], 'JST', 'yyyy/MM/dd');
     }
 
-    // 日付、IDが一致し、退勤がまだ空の行
-    if ((rowDateStr === dateStr || rowDateObjFormatted === dateStr) && rowId === targetId && rowClockOut === "") {
-      logToSheet('DEBUG', '行一致', {row: i + 1});
+    // 日付の正規化比較
+    const rowDateNorm = normalizeDate(rowDateStr);
+    const rowDateObjNorm = normalizeDate(rowDateObjStr);
+    
+    // 判定ロジック
+    const isDateMatch = (rowDateNorm === targetDateNorm) || (rowDateObjNorm === targetDateNorm);
+    const isIdMatch = (rowId === targetId);
+
+    // ログに判定詳細を残す
+    if (i === displayValues.length - 1) {
+       logToSheet('DEBUG', '最新行チェック', {
+         row: i + 1,
+         rowDate: rowDateStr,
+         isDateMatch: isDateMatch,
+         rowId: rowId,
+         isIdMatch: isIdMatch,
+         out: rowClockOut
+       });
+    }
+
+    if (isDateMatch && isIdMatch && rowClockOut === "") {
+      logToSheet('DEBUG', '行一致成功', {row: i + 1});
       return i + 1;
     }
   }
+  
   logToSheet('WARN', '行が見つかりませんでした', {date: dateStr, id: targetId});
   return -1;
+}
+
+/**
+ * 日付正規化 (2026/01/09 -> 2026/1/9)
+ */
+function normalizeDate(str) {
+  if (!str) return "";
+  const s = String(str).trim();
+  const parts = s.split('/');
+  if (parts.length === 3) {
+    return Number(parts[0]) + '/' + Number(parts[1]) + '/' + Number(parts[2]);
+  }
+  return s; // スラッシュ区切りでなければそのまま
 }
 
 /**
