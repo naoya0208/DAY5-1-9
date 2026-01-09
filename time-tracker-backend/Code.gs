@@ -326,9 +326,59 @@ function handleBreak(traineeId, name, dateStr, timeStr, phase) {
   }
 }
 
-// ... handleAssignment ...
+/**
+ * 4. 課題完了 (確実に反映させるためにロジックを整理)
+ */
+function handleAssignment(traineeId, name, dateTimeStr, appUrl) {
+  const sheet = getSheetSafe('課題完了記録');
+  if (!sheet) {
+    logToSheet('ERROR', '課題完了記録シートが見つかりません');
+    throw new Error('課題完了記録シートが見つかりません');
+  }
+  
+  // 確実に追記
+  sheet.appendRow([dateTimeStr, traineeId, name, appUrl, '未確認']);
+  
+  // LINE通知
+  sendLineMessage(`【🎉課題完了報告🎉】\n研修生：${name}\n完了：${dateTimeStr}\nURL: ${appUrl}`);
+  
+  logToSheet('INFO', '課題完了報告を記録しました', {name: name, url: appUrl});
+}
 
-// ... updateMasterSheet ...
+/**
+ * 共通：マスタ更新 (他シートが動かない原因をここで解消)
+ */
+function updateMasterSheet(traineeId, name, status) {
+  const sheet = getSheetSafe('研修生マスタ');
+  if (!sheet) {
+    logToSheet('ERROR', '研修生マスタのシートが見つかりません');
+    return;
+  }
+
+  const data = sheet.getDataRange().getDisplayValues();
+  const targetId = String(traineeId).trim();
+  let rowIdx = -1;
+
+  // 1行目はヘッダーなので2行目から探索
+  for (let i = 1; i < data.length; i++) {
+    const rowId = String(data[i][0]).trim();
+    if (rowId === targetId) {
+      rowIdx = i + 1;
+      break;
+    }
+  }
+
+  if (rowIdx !== -1) {
+    // 既存ユーザーの更新
+    sheet.getRange(rowIdx, 2).setValue(name);
+    sheet.getRange(rowIdx, 3).setValue(status);
+    logToSheet('INFO', 'マスタ更新成功', {id: targetId, status: status});
+  } else {
+    // 新規ユーザーの追加
+    sheet.appendRow([targetId, name, status]);
+    logToSheet('INFO', 'マスタ新規追加成功', {id: targetId, name: name, status: status});
+  }
+}
 
 /**
  * ユーティリティ
