@@ -55,9 +55,6 @@ function doGet() {
 /**
  * メイン：POST受信
  */
-/**
- * メイン：POST受信
- */
 function doPost(e) {
   try {
     // まずシートヘッダーを確認・初期化
