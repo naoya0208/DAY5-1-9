@@ -177,24 +177,57 @@ function handleClockIn(traineeId, name, dateStr, timeStr, dateTimeStr) {
 /**
  * 2. 退勤
  */
+/**
+ * 2. 退勤
+ */
 function handleClockOut(traineeId, name, dateStr, timeStr) {
   const sheet = getSheetSafe('打刻記録');
-  const rowIdx = findRowIndex(sheet, dateStr, traineeId);
+  
+  // 1. 今日の日付で検索
+  let rowIdx = findRowIndex(sheet, dateStr, traineeId);
+
+  // 2. 見つからない場合、日付またぎ（前日）の可能性を考慮して検索
+  if (rowIdx === -1) {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = Utilities.formatDate(yesterday, 'JST', 'yyyy/MM/dd');
+    logToSheet('INFO', '当日分の記録なし。前日分を検索します', yesterdayStr);
+    rowIdx = findRowIndex(sheet, yesterdayStr, traineeId);
+  }
 
   if (rowIdx !== -1) {
     const range = sheet.getRange(rowIdx, 1, 1, 7);
     const displayData = range.getDisplayValues()[0];
     const clockInTime = displayData[3];
-    const breakDuration = displayData[5] || '00:00';
+    const breakVal = displayData[5] || '';
     
-    // 計算
-    const workTime = calculateNetWorkTime(clockInTime, timeStr, breakDuration);
+    // 計算 (休憩中は一旦強制終了扱いにして計算)
+    let totalBreakMinutes = 0;
+    
+    // 休憩ステータス(@開始時刻|累積)の解析
+    if (breakVal.startsWith('@')) {
+      // 休憩中のまま退勤した場合：休憩終了とみなして加算
+      const parts = breakVal.replace('@', '').split('|');
+      const startBreakTime = parts[0];
+      const accumulated = parts.length > 1 ? timeToMinutes(parts[1]) : 0;
+      
+      const currentBreakDuration = getDiffInMinutes(startBreakTime, timeStr);
+      totalBreakMinutes = accumulated + currentBreakDuration;
+      
+      // シート上の休憩時間も確定値に更新
+      sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(totalBreakMinutes));
+    } else {
+      // 既に休憩終了している、または休憩なし
+      totalBreakMinutes = timeToMinutes(breakVal);
+    }
+
+    const workTime = calculateNetWorkTime(clockInTime, timeStr, totalBreakMinutes);
     
     sheet.getRange(rowIdx, 5).setValue(timeStr);
     sheet.getRange(rowIdx, 7).setValue(workTime);
     
     updateMasterSheet(traineeId, name, '未出勤');
-    sendLineMessage(`【退勤】\n${name}\n出勤：${clockInTime}\n退勤：${timeStr}\n休憩：${breakDuration}\n勤務時間：${workTime}`);
+    sendLineMessage(`【退勤】\n${name}\n出勤：${clockInTime}\n退勤：${timeStr}\n休憩：${formatMinutesToHHMM(totalBreakMinutes)}\n勤務時間：${workTime}`);
   } else {
     throw new Error('退勤対象の出勤記録（退勤未記入の行）が見つかりません');
   }
@@ -205,89 +238,68 @@ function handleClockOut(traineeId, name, dateStr, timeStr) {
  */
 function handleBreak(traineeId, name, dateStr, timeStr, phase) {
   const sheet = getSheetSafe('打刻記録');
-  const rowIdx = findRowIndex(sheet, dateStr, traineeId);
+  
+  // 今日の分を検索
+  let rowIdx = findRowIndex(sheet, dateStr, traineeId);
+  
+  // 見つからない場合は前日検索（日付またぎ勤務中の休憩）
+  if (rowIdx === -1) {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = Utilities.formatDate(yesterday, 'JST', 'yyyy/MM/dd');
+    rowIdx = findRowIndex(sheet, yesterdayStr, traineeId);
+  }
 
   if (rowIdx !== -1) {
+    const currentVal = String(sheet.getRange(rowIdx, 6).getValue()).trim();
+
     if (phase === 'start') {
-      sheet.getRange(rowIdx, 6).setValue('@' + timeStr);
+      // 既に休憩中の場合は無視（または更新）
+      if (currentVal.startsWith('@')) return; 
+
+      // 既存の累積時間があれば保持
+      // フォーマット: HH:mm (確定済み時間) -> @開始時刻|確定済み時間
+      const savedTime = currentVal === '' ? '00:00' : currentVal;
+      sheet.getRange(rowIdx, 6).setValue(`@${timeStr}|${savedTime}`);
+      
       updateMasterSheet(traineeId, name, '休憩中');
       logToSheet('INFO', '休憩開始', name);
     } else {
-      const val = String(sheet.getRange(rowIdx, 6).getValue());
-      if (val.startsWith('@')) {
-        const diff = getDiffInMinutes(val.substring(1), timeStr);
-        sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(diff));
+      // 休憩終了処理
+      if (currentVal.startsWith('@')) {
+        const parts = currentVal.replace('@', '').split('|');
+        const startBreakTime = parts[0];
+        const accumulatedStr = parts.length > 1 ? parts[1] : '00:00';
+        
+        const diff = getDiffInMinutes(startBreakTime, timeStr);
+        const accumulated = timeToMinutes(accumulatedStr);
+        
+        // 合計時間をセット
+        const total = accumulated + diff;
+        sheet.getRange(rowIdx, 6).setValue(formatMinutesToHHMM(total));
+        
+        updateMasterSheet(traineeId, name, '勤務中');
+        logToSheet('INFO', '休憩終了', name);
       }
-      updateMasterSheet(traineeId, name, '勤務中');
-      logToSheet('INFO', '休憩終了', name);
     }
   }
 }
 
-/**
- * 4. 課題完了 (確実に反映させるためにロジックを整理)
- */
-function handleAssignment(traineeId, name, dateTimeStr, appUrl) {
-  const sheet = getSheetSafe('課題完了記録');
-  if (!sheet) {
-    logToSheet('ERROR', '課題完了記録シートが見つかりません');
-    throw new Error('課題完了記録シートが見つかりません');
-  }
-  
-  // 確実に追記
-  sheet.appendRow([dateTimeStr, traineeId, name, appUrl, '未確認']);
-  
-  // LINE通知
-  sendLineMessage(`【🎉課題完了報告🎉】\n研修生：${name}\n完了：${dateTimeStr}\nURL: ${appUrl}`);
-  
-  logToSheet('INFO', '課題完了報告を記録しました', {name: name, url: appUrl});
-}
+// ... handleAssignment ...
 
-/**
- * 共通：マスタ更新 (他シートが動かない原因をここで解消)
- */
-function updateMasterSheet(traineeId, name, status) {
-  const sheet = getSheetSafe('研修生マスタ');
-  if (!sheet) {
-    logToSheet('ERROR', '研修生マスタのシートが見つかりません');
-    return;
-  }
-
-  const data = sheet.getDataRange().getDisplayValues();
-  const targetId = String(traineeId).trim();
-  let rowIdx = -1;
-
-  // 1行目はヘッダーなので2行目から探索
-  for (let i = 1; i < data.length; i++) {
-    const rowId = String(data[i][0]).trim();
-    if (rowId === targetId) {
-      rowIdx = i + 1;
-      break;
-    }
-  }
-
-  if (rowIdx !== -1) {
-    // 既存ユーザーの更新
-    sheet.getRange(rowIdx, 2).setValue(name);
-    sheet.getRange(rowIdx, 3).setValue(status);
-    logToSheet('INFO', 'マスタ更新成功', {id: targetId, status: status});
-  } else {
-    // 新規ユーザーの追加
-    sheet.appendRow([targetId, name, status]);
-    logToSheet('INFO', 'マスタ新規追加成功', {id: targetId, name: name, status: status});
-  }
-}
+// ... updateMasterSheet ...
 
 /**
  * ユーティリティ
  */
-function calculateNetWorkTime(start, end, breakStr) {
+function calculateNetWorkTime(start, end, totalBreakMinutes) {
   const s = timeToMinutes(start);
   const e = timeToMinutes(end);
   let diff = e - s;
-  if (diff < 0) diff += 24 * 60;
-  const b = timeToMinutes(String(breakStr).replace('@', ''));
-  return formatMinutesToHHMM(diff - b);
+  if (diff < 0) diff += 24 * 60; // 日付またぎ対応
+  
+  // 休憩時間を引く
+  return formatMinutesToHHMM(diff - totalBreakMinutes);
 }
 
 function getDiffInMinutes(s, e) {
