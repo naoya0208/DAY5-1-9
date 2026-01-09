@@ -55,8 +55,14 @@ function doGet() {
 /**
  * メイン：POST受信
  */
+/**
+ * メイン：POST受信
+ */
 function doPost(e) {
   try {
+    // まずシートヘッダーを確認・初期化
+    checkAndSetupHeaders();
+
     const contents = (e && e.postData) ? e.postData.contents : null;
     if (!contents) throw new Error("データが届いていません");
     
@@ -92,6 +98,41 @@ function doPost(e) {
     logToSheet('ERROR', 'doPostエラー', err.toString());
     return ContentService.createTextOutput(JSON.stringify({status: 'error', message: err.toString()})).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * シートの初期セットアップ（ヘッダー行作成）
+ */
+function checkAndSetupHeaders() {
+  const definitions = [
+    {
+      name: '打刻記録',
+      headers: ['日付', '研修生ID', '氏名', '出勤時刻', '退勤時刻', '休憩時間', '実働時間']
+    },
+    {
+      name: '研修生マスタ',
+      headers: ['研修生ID', '氏名', '現在のステータス']
+    },
+    {
+      name: '課題完了記録',
+      headers: ['日時', '研修生ID', '氏名', '課題URL', '確認ステータス']
+    },
+    {
+      name: '設定・ログ',
+      headers: ['日時', 'レベル', 'メッセージ', '詳細データ']
+    }
+  ];
+
+  definitions.forEach(def => {
+    const sheet = getSheetSafe(def.name);
+    // シートが存在し、かつデータが空（または1行もない）場合にヘッダーを設定
+    if (sheet && sheet.getLastRow() === 0) {
+      sheet.appendRow(def.headers);
+      // ヘッダーを太字にして固定
+      sheet.getRange(1, 1, 1, def.headers.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+  });
 }
 
 /**
